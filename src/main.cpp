@@ -44,8 +44,20 @@ MFRC522 mfrc522{driver};
 
 Adafruit_ILI9341 tft = Adafruit_ILI9341(1, 3, 4, 5, 2, 6);
 
+unsigned long epochTimeBase = 1733519928;
 bool displayWarning = false;
 int lastDoorState = -1;
+int lastIndoorCount = -1;
+std::vector<unsigned long> insideBase;
+
+void getTimeFromEpoch(unsigned long epochTime, int &hour, int &minute) {
+  const unsigned long SECONDS_PER_DAY = 86400;
+  epochTime += 1 * 3600;
+
+  unsigned long timeOfDay = epochTime % SECONDS_PER_DAY;
+  hour = timeOfDay / 3600;
+  minute = (timeOfDay % 3600) / 60;
+}
 
 unsigned long getEspId() {
   uint64_t efuse = ESP.getEfuseMac();
@@ -76,6 +88,13 @@ void rfidLoop() {
     return; // if same as last card (in 2.5s)
 
   Serial.printf("Scanned card ID: %lu\n", cardId);
+  if(std::find(insideBase.begin(), insideBase.end(), cardId) != insideBase.end()) {
+    // found
+    insideBase.erase(std::find(insideBase.begin(), insideBase.end(), cardId));
+  } else {
+    insideBase.push_back(cardId);
+  }
+
   // scanCard(cardId);
   lastCardId = cardId;
 
@@ -114,14 +133,20 @@ void setup() {
     delay(5);
   }
 
-  configTime(3600, 0, "pool.ntp.org", "time.nist.gov", "time.google.com");
   // initWs();
 }
 
 unsigned long lastBorderChange = 0;
+unsigned long lastTimeChange = 0;
+unsigned long lastStatsDropTime = 0;
+int lastO2 = -1;
+int currO2 = 100;
 bool lastBorder = false;
 
+
 void loop() {
+  int currDoor = digitalRead(DOOR_PIN);
+
   if (displayWarning) {
     if (millis() - lastBorderChange > 350) {
       lastBorder = !lastBorder;
@@ -144,29 +169,87 @@ void loop() {
     tft.drawRect(2, 2, 316, 236, BLACK);
   }
 
-  int currDoor = digitalRead(DOOR_PIN);
-  if (currDoor != lastDoorState) {
+  if (lastTimeChange == 0 || millis() - lastTimeChange > 60000) {
+    int hour, minute;
+
+    getTimeFromEpoch(epochTimeBase + (millis() / 1000) - 60, hour, minute);
     tft.setTextSize(4);
     tft.setCursor(10, 10);
     tft.setTextColor(BLACK);
-    tft.printf("21:37");
+    tft.printf("%d:%d", hour, minute);
 
+    getTimeFromEpoch(epochTimeBase + (millis() / 1000), hour, minute);
     tft.setCursor(10, 10);
     tft.setTextColor(WHITE);
-    tft.printf("21:37");
+    tft.printf("%d:%d", hour, minute);
 
+    lastTimeChange = millis();
+  }
 
-    tft.drawCircle(30, 80, 13, WHITE);
-    tft.drawRoundRect(10, 100, 40, 20, 5, WHITE);
-    tft.setTextSize(6);
+  if (lastIndoorCount != insideBase.size()) {
+    tft.drawCircle(247, 18, 6, WHITE);
+    tft.drawRoundRect(235, 28, 24, 10, 5, WHITE);
     
-    tft.setCursor(55, 75);
+    tft.setCursor(270, 10);
     tft.setTextColor(BLACK);
-    tft.printf("%d", lastDoorState);
+    tft.printf("%d", lastIndoorCount);
 
-    tft.setCursor(55, 75);
+    tft.setCursor(270, 10);
     tft.setTextColor(WHITE);
-    tft.printf("%d", currDoor);
+    tft.printf("%d", insideBase.size());
+    
+    lastIndoorCount = insideBase.size();
+  }
+
+  if (lastO2 != currO2) {
+    tft.setCursor(10, 50);
+    tft.setTextColor(BLACK);
+    tft.printf("o2:%d%%", lastO2);
+
+    tft.setCursor(10, 50);
+    tft.setTextColor(WHITE);
+    tft.printf("o2:%d%%", currO2);
+    
+    lastO2 = currO2;
+  }
+
+  if (currDoor == 1) {
+    if (millis() - lastStatsDropTime >= 1000) {
+      currO2 -= 1;
+      if (currO2 < 0) currO2 = 0;
+
+      lastStatsDropTime = millis();
+    }
+  } else {
+    if (millis() - lastStatsDropTime >= 2000) {
+      currO2 += 1;
+      if (currO2 > 100) currO2 = 100;
+
+      lastStatsDropTime = millis();
+    }
+  }
+
+  if (currDoor != lastDoorState) {
+    tft.drawRect(10, 90, 24, 32, WHITE);
+    tft.drawCircle(30, 104, 4, WHITE);
+
+    if (currDoor == 1) {
+      tft.setCursor(40, 94);
+      tft.setTextColor(BLACK);
+      tft.printf("ZAMKNIETE", lastO2);
+
+      tft.setCursor(40, 94);
+      tft.setTextColor(RED);
+      tft.printf("OTWARTE", currO2);
+    } else {
+      tft.setCursor(40, 94);
+      tft.setTextColor(BLACK);
+      tft.printf("OTWARTE", lastO2);
+
+      tft.setCursor(40, 94);
+      tft.setTextColor(LIGHTGREY);
+      tft.printf("ZAMKNIETE", currO2);
+    }
 
     lastDoorState = currDoor;
     displayWarning = currDoor == 1;
