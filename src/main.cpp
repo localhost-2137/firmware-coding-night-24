@@ -4,9 +4,24 @@
 #include <ArduinoJson.h>
 #include <WebSocketsClient.h>
 #include <Wire.h>
+#include <SPI.h>
+#include <MFRC522v2.h>
+#include <MFRC522DriverSPI.h>
+#include <MFRC522DriverPinSimple.h>
+// #include <MFRC522Debug.h>
 
 #define DOOR_PIN 7
+#define RFID_SCK 8
+#define RFID_MISO 9
+#define RFID_MOSI 10
+#define RFID_CS 11
 #define NAME_PREFIX "SRAM-DOR"
+
+MFRC522DriverPinSimple ss_pin(RFID_CS);
+MFRC522DriverSPI driver{ss_pin};
+MFRC522 mfrc522{driver};
+
+int lastDoorState = -1;
 
 unsigned long getEspId() {
   uint64_t efuse = ESP.getEfuseMac();
@@ -20,11 +35,35 @@ unsigned long getEspId() {
   return (unsigned long)(efuse & 0x000000007FFFFFFF);
 }
 
+unsigned long lastCardReadTime = 0;
+unsigned long lastCardId = 0;
+void rfidLoop() {
+  if (millis() - lastCardReadTime < 500)
+    return;
+  if (!mfrc522.PICC_IsNewCardPresent())
+    return;
+  if (!mfrc522.PICC_ReadCardSerial())
+    return;
+
+  unsigned long cardId =
+      mfrc522.uid.uidByte[0] + (mfrc522.uid.uidByte[1] << 8) +
+      (mfrc522.uid.uidByte[2] << 16) + (mfrc522.uid.uidByte[3] << 24);
+  if (lastCardId == cardId && millis() - lastCardReadTime < 2500)
+    return; // if same as last card (in 2.5s)
+
+  Serial.printf("Scanned card ID: %lu\n", cardId);
+  // scanCard(cardId);
+  lastCardId = cardId;
+
+  mfrc522.PICC_HaltA();
+  lastCardReadTime = millis();
+}
+
 void setup() {
   Serial.begin(115200);
   pinMode(DOOR_PIN, INPUT_PULLUP);
-
-  delay(5000);
+  SPI.begin(RFID_SCK, RFID_MISO, RFID_MOSI);
+  mfrc522.PCD_Init();
 
   Serial.println("dsadsa");
   WiFi.mode(WIFI_STA);
@@ -41,22 +80,22 @@ void setup() {
   bool res = wm.autoConnect(generatedDeviceName, "SRAM_NA_TO");
   if (res) {
     Serial.printf("Connected!\n");
-  } else {
-    // initBt(generatedDeviceName);
   }
 
   while (!res && !wm.process()) {
     delay(5);
   }
 
-  // wifiConnected = true;
-  // if (!res)
-    // deinitBt(true);
   configTime(3600, 0, "pool.ntp.org", "time.nist.gov", "time.google.com");
   // initWs();
 }
 
 void loop() {
-  Serial.println(digitalRead(DOOR_PIN));
-  delay(100);
+  int currDoor = digitalRead(DOOR_PIN);
+  if (currDoor != lastDoorState) { 
+    lastDoorState = currDoor;
+    Serial.println(currDoor);
+  }
+  
+  rfidLoop();
 }
