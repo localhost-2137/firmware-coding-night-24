@@ -13,6 +13,11 @@
 #include <HTTPClient.h>
 #include "mars.hpp"
 
+#define TIME_URL "http://10.42.0.1:3000/time"
+#define WS_HOST "10.42.0.1"
+#define WS_PORT 3000
+#define WS_PATH "/ws"
+
 #define DOOR_PIN 7
 #define RFID_SCK 8
 #define RFID_MISO 9
@@ -49,7 +54,8 @@ Adafruit_ILI9341 tft = Adafruit_ILI9341(1, 3, 4, 5, 2, 6);
 WebSocketsClient webSocket;
 
 unsigned long long epochTimeBase = 1733519928;
-bool displayWarning = false;
+bool systemAlert = false;
+unsigned long alertShowTime = 0;
 int lastDoorState = -1;
 int lastIndoorCount = -1;
 std::vector<unsigned long> insideBase;
@@ -114,6 +120,14 @@ void webSocketEvent(WStype_t type, uint8_t *payload, size_t length) {
 
     String typ = doc["type"];
     Serial.printf("type: %s\n", typ.c_str());
+
+    if (typ == "alert") {
+      String msg = doc["value"];
+      systemAlert = true;
+      alertShowTime = millis();
+    } else if (typ == "end_alert") {
+      systemAlert = false;
+    }
   }
 }
 
@@ -152,7 +166,7 @@ void setup() {
   WiFiClient client;
   HTTPClient http;
     
-  http.begin(client, "http://10.42.0.1:3000/time");
+  http.begin(client, TIME_URL);
   int statusCode = http.GET();
   if (statusCode > 0) {
     String epochStr = http.getString();
@@ -163,7 +177,7 @@ void setup() {
     Serial.printf("%llu | %llu\n", epoch, epochTimeBase);    
   }
 
-  webSocket.begin("10.42.0.1", 3000, "/ws");
+  webSocket.begin(WS_HOST, WS_PORT, WS_PATH);
   webSocket.onEvent(webSocketEvent);
   webSocket.setReconnectInterval(1500);
   // initWs();
@@ -172,6 +186,8 @@ void setup() {
 unsigned long lastBorderChange = 0;
 unsigned long lastTimeChange = 0;
 unsigned long lastStatsDropTime = 0;
+unsigned long lastDoorOpen = 0;
+unsigned long lastUpdate = 0;
 int lastO2 = -1;
 int currO2 = 100;
 bool lastBorder = false;
@@ -188,11 +204,21 @@ void sendWsUpdate() {
   webSocket.sendTXT(output);
 }
 
+void sendDoorOpenAlert() {
+  JsonDocument doc;
+  doc["type"] = "alert";
+  doc["value"] = "Drzwi otwarte przez 10s.";
+
+  String output;
+  serializeJson(doc, output);
+  webSocket.sendTXT(output);
+}
+
 void loop() {
   webSocket.loop();
   int currDoor = digitalRead(DOOR_PIN);
 
-  if (displayWarning) {
+  if (systemAlert) {
     if (millis() - lastBorderChange > 350) {
       lastBorder = !lastBorder;
       if (lastBorder) {
@@ -299,12 +325,27 @@ void loop() {
     }
 
     lastDoorState = currDoor;
-    displayWarning = currDoor == 1;
+    if (currDoor == 1) {
+      lastDoorOpen = millis();
+    }
     sendWsUpdate();
   }
 
-  // tft.drawRect(205, 125, 115, 115, ~RGB_TO_HEX(249, 32, 52));
-  // tft.setTextColor(~RGB_TO_HEX(249, 32, 52));
-  // tft.printf("dsadsad");
+  if (lastDoorState == 1 && millis() - lastDoorOpen >= 10000) {
+    sendDoorOpenAlert();
+    lastDoorOpen = millis();
+    systemAlert = true;
+    alertShowTime = millis();
+  }
+
+  if (systemAlert && millis() - alertShowTime > 5000) {
+    systemAlert = false;
+  }
+
+  if (millis() - lastUpdate > 1000) {
+    sendWsUpdate();
+    lastUpdate = millis();
+  }
+
   rfidLoop();
 }
