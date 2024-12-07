@@ -10,6 +10,7 @@
 #include <MFRC522DriverPinSimple.h>
 #include "Adafruit_GFX.h"
 #include "Adafruit_ILI9341.h"
+#include "mars.hpp"
 
 #define DOOR_PIN 7
 #define RFID_SCK 8
@@ -37,14 +38,6 @@
 #define ORANGE 0x02DF      ///< 255, 165,   0
 #define GREENYELLOW 0x501A ///< 173, 255,  41
 #define PINK 0x03E7        ///< 255, 130, 198
-
-uint16_t RGB_TO_HEX(uint8_t r, uint8_t g, uint8_t b) {
-    uint16_t hex = ((r >> 3) << 11) |   // Red (5 bits)
-                   ((g >> 2) << 5)  |   // Green (6 bits)
-                   (b >> 3);            // Blue (5 bits)
-    
-    return hex;
-}
 
 MFRC522DriverPinSimple ss_pin(RFID_CS);
 MFRC522DriverSPI driver{ss_pin};
@@ -141,6 +134,7 @@ void setup() {
     delay(5);
   }
 
+  drawMars(tft);
   // initWs();
 }
 
@@ -263,7 +257,7 @@ void loop() {
     displayWarning = currDoor == 1;
   }
 
-  tft.drawRect(205, 125, 115, 115, ~RGB_TO_HEX(249, 32, 52));
+  // tft.drawRect(205, 125, 115, 115, ~RGB_TO_HEX(249, 32, 52));
   // tft.setTextColor(~RGB_TO_HEX(249, 32, 52));
   // tft.printf("dsadsad");
   rfidLoop();
