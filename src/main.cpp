@@ -105,6 +105,16 @@ void rfidLoop() {
     insideBase.push_back(cardId);
   }
 
+  tft.drawRect(0, 0, 320, 240, GREENYELLOW);
+  tft.drawRect(1, 1, 318, 238, GREENYELLOW);
+  tft.drawRect(2, 2, 316, 236, GREENYELLOW);
+  
+  delay(250);
+
+  tft.drawRect(0, 0, 320, 240, BLACK);
+  tft.drawRect(1, 1, 318, 238, BLACK);
+  tft.drawRect(2, 2, 316, 236, BLACK);
+
   // scanCard(cardId);
   lastCardId = cardId;
 
@@ -162,7 +172,7 @@ void setup() {
     delay(5);
   }
 
-  // drawMars(tft);
+  drawMars(tft);
   WiFiClient client;
   HTTPClient http;
     
