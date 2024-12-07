@@ -10,6 +10,7 @@
 #include <MFRC522DriverPinSimple.h>
 #include "Adafruit_GFX.h"
 #include "Adafruit_ILI9341.h"
+#include <HTTPClient.h>
 #include "mars.hpp"
 
 #define DOOR_PIN 7
@@ -45,7 +46,9 @@ MFRC522 mfrc522{driver};
 
 Adafruit_ILI9341 tft = Adafruit_ILI9341(1, 3, 4, 5, 2, 6);
 
-unsigned long epochTimeBase = 1733519928;
+WebSocketsClient webSocket;
+
+unsigned long long epochTimeBase = 1733519928;
 bool displayWarning = false;
 int lastDoorState = -1;
 int lastIndoorCount = -1;
@@ -103,6 +106,17 @@ void rfidLoop() {
   lastCardReadTime = millis();
 }
 
+void webSocketEvent(WStype_t type, uint8_t *payload, size_t length) {
+  Serial.printf("type: %d\n", type);
+  if (type == WStype_TEXT) {
+    JsonDocument doc;
+    deserializeJson(doc, payload);
+
+    String typ = doc["type"];
+    Serial.printf("type: %s\n", typ.c_str());
+  }
+}
+
 void setup() {
   Serial.begin(115200);
   pinMode(DOOR_PIN, INPUT_PULLUP);
@@ -134,7 +148,24 @@ void setup() {
     delay(5);
   }
 
-  drawMars(tft);
+  // drawMars(tft);
+  WiFiClient client;
+  HTTPClient http;
+    
+  http.begin(client, "http://10.42.0.1:3000/time");
+  int statusCode = http.GET();
+  if (statusCode > 0) {
+    String epochStr = http.getString();
+    Serial.printf("get_string: %s\n", epochStr.c_str());
+    char* endPtr;
+    unsigned long long epoch = strtoull(epochStr.c_str(), &endPtr, 10);
+    epochTimeBase = epoch - millis();
+    Serial.printf("%llu | %llu\n", epoch, epochTimeBase);    
+  }
+
+  webSocket.begin("10.42.0.1", 3000, "/ws");
+  webSocket.onEvent(webSocketEvent);
+  webSocket.setReconnectInterval(1500);
   // initWs();
 }
 
@@ -145,8 +176,20 @@ int lastO2 = -1;
 int currO2 = 100;
 bool lastBorder = false;
 
+void sendWsUpdate() {
+  JsonDocument doc;
+  doc["type"] = "base_data";
+  doc["value"]["o2"] = currO2;
+  doc["value"]["inside"] = insideBase.size();
+  doc["value"]["open"] = lastDoorState == 1;
+
+  String output;
+  serializeJson(doc, output);
+  webSocket.sendTXT(output);
+}
 
 void loop() {
+  webSocket.loop();
   int currDoor = digitalRead(DOOR_PIN);
 
   if (displayWarning) {
@@ -174,16 +217,16 @@ void loop() {
   if (lastTimeChange == 0 || millis() - lastTimeChange > 60000) {
     int hour, minute;
 
-    getTimeFromEpoch(epochTimeBase + (millis() / 1000) - 60, hour, minute);
+    getTimeFromEpoch((epochTimeBase + millis()) / 1000 - 60, hour, minute);
     tft.setTextSize(4);
     tft.setCursor(10, 10);
     tft.setTextColor(BLACK);
-    tft.printf("%d:%d", hour, minute);
+    tft.printf("%02d:%02d", hour, minute);
 
-    getTimeFromEpoch(epochTimeBase + (millis() / 1000), hour, minute);
+    getTimeFromEpoch((epochTimeBase + millis()) / 1000, hour, minute);
     tft.setCursor(10, 10);
     tft.setTextColor(WHITE);
-    tft.printf("%d:%d", hour, minute);
+    tft.printf("%02d:%02d", hour, minute);
 
     lastTimeChange = millis();
   }
@@ -201,6 +244,7 @@ void loop() {
     tft.printf("%d", insideBase.size());
     
     lastIndoorCount = insideBase.size();
+    sendWsUpdate();
   }
 
   if (lastO2 != currO2) {
@@ -213,6 +257,7 @@ void loop() {
     tft.printf("o2:%d%%", currO2);
     
     lastO2 = currO2;
+    sendWsUpdate();
   }
 
   if (currDoor == 1) {
@@ -255,6 +300,7 @@ void loop() {
 
     lastDoorState = currDoor;
     displayWarning = currDoor == 1;
+    sendWsUpdate();
   }
 
   // tft.drawRect(205, 125, 115, 115, ~RGB_TO_HEX(249, 32, 52));
