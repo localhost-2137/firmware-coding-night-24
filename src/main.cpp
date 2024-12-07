@@ -98,16 +98,23 @@ void rfidLoop() {
     return; // if same as last card (in 2.5s)
 
   Serial.printf("Scanned card ID: %lu\n", cardId);
-  if(std::find(insideBase.begin(), insideBase.end(), cardId) != insideBase.end()) {
-    // found
-    insideBase.erase(std::find(insideBase.begin(), insideBase.end(), cardId));
-  } else {
-    insideBase.push_back(cardId);
-  }
 
-  tft.drawRect(0, 0, 320, 240, GREENYELLOW);
-  tft.drawRect(1, 1, 318, 238, GREENYELLOW);
-  tft.drawRect(2, 2, 316, 236, GREENYELLOW);
+  if(insideBase.size() > 0) {
+    if(std::find(insideBase.begin(), insideBase.end(), cardId) != insideBase.end()) {
+      // found
+      insideBase.erase(std::find(insideBase.begin(), insideBase.end(), cardId));
+    } else {
+      insideBase.push_back(cardId);
+    }
+
+    tft.drawRect(0, 0, 320, 240, GREENYELLOW);
+    tft.drawRect(1, 1, 318, 238, GREENYELLOW);
+    tft.drawRect(2, 2, 316, 236, GREENYELLOW);
+  } else {
+    tft.drawRect(0, 0, 320, 240, RED);
+    tft.drawRect(1, 1, 318, 238, RED);
+    tft.drawRect(2, 2, 316, 236, RED);
+  }
   
   delay(250);
 
@@ -187,6 +194,10 @@ void setup() {
     Serial.printf("%llu | %llu\n", epoch, epochTimeBase);    
   }
 
+  for(int i = 0; i < 63; i++) {
+    insideBase.push_back(i);
+  }
+
   webSocket.begin(WS_HOST, WS_PORT, WS_PATH);
   webSocket.onEvent(webSocketEvent);
   webSocket.setReconnectInterval(1500);
@@ -198,6 +209,8 @@ unsigned long lastTimeChange = 0;
 unsigned long lastStatsDropTime = 0;
 unsigned long lastDoorOpen = 0;
 unsigned long lastUpdate = 0;
+unsigned long lastDead = 0;
+unsigned long lastDeadAlert = 0;
 int lastO2 = -1;
 int currO2 = 100;
 bool lastBorder = false;
@@ -297,7 +310,7 @@ void loop() {
   }
 
   if (currDoor == 1) {
-    if (millis() - lastStatsDropTime >= 1000) {
+    if (millis() - lastStatsDropTime >= 500) {
       currO2 -= 1;
       if (currO2 < 0) currO2 = 0;
 
@@ -355,6 +368,21 @@ void loop() {
   if (millis() - lastUpdate > 1000) {
     sendWsUpdate();
     lastUpdate = millis();
+  }
+
+  if(currO2 <= 0 && millis() - lastDead >= 250) {
+    if (insideBase.size() > 0) {
+      int randomIndex = random(insideBase.size());
+      insideBase.erase(insideBase.begin() + randomIndex);
+    }
+    
+    lastDead = millis();
+
+    if(millis() - lastDeadAlert >= 5000) {
+      systemAlert = true;
+      alertShowTime = millis();
+      sendDoorOpenAlert();
+    }
   }
 
   rfidLoop();
